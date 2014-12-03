@@ -317,8 +317,8 @@ def discoverAllServers( ):
                 das_server_index = das_server_index + 1
 
     printDebug("PleXBMC -> serverList is " + str(das_servers), False)
-
-    return deduplicateServers(das_servers)
+    return das_servers
+    #return deduplicateServers(das_servers)
 
 def readCache(cachefile):
     if __settings__.getSetting("cache") == "false":
@@ -393,12 +393,12 @@ def getLocalServers(ip_address="localhost", port=32400):
          return []
 
     server=etree.fromstring(html)
-
+    
     return {'serverName': server.attrib['friendlyName'].encode('utf-8'),
                         'server'    : ip_address,
                         'port'      : port,
                         'discovery' : 'local',
-                        'token'     : None ,
+                        'token'     : getMyPlexToken() ,
                         'uuid'      : server.attrib['machineIdentifier'],
                         'owned'     : '1',
                         'master'    : 1,
@@ -448,7 +448,7 @@ def getMyPlexServers( ):
                             'owned'     : owned,
                             'master'    : master,
                             'class'     : ""})
-
+    printDebug(tempServers)
     return tempServers
                                        
 def deduplicateServers( server_list ):
@@ -809,6 +809,10 @@ def getNewMyPlexToken(suppress=True, title="Error"):
 
 def getURL(url, suppress=True, type="GET", popup=0):
     printDebug("== ENTER: getURL ==", False)
+    separator="?"
+    if "?" in url:
+        separator="&"
+    url = url+separator+"X-Plex-Token="+getMyPlexToken()
     try:
         if url[0:4] == "http":
             serversplit=2
@@ -820,8 +824,7 @@ def getURL(url, suppress=True, type="GET", popup=0):
         server=url.split('/')[serversplit]
         urlPath="/"+"/".join(url.split('/')[urlsplit:])
 
-        authHeader=getAuthDetails({'token':_PARAM_TOKEN}, False)
-
+        authHeader=getAuthDetails({'token':getMyPlexToken()}, False)
         printDebug("url = "+url)
         printDebug("header = "+str(authHeader))
         conn = httplib.HTTPConnection(server, timeout=10)
@@ -1011,8 +1014,9 @@ def addGUIItem(url, details, extraData, context=None, folder=True):
         if item_title == '':
             return
 
-        if (extraData.get('token',None) is None) and _PARAM_TOKEN:
-            extraData['token']=_PARAM_TOKEN
+        #if (extraData.get('token',None) is None) and _PARAM_TOKEN:
+        #    extraData['token']=_PARAM_TOKEN
+        extraData['token']=getMyPlexToken()
 
         aToken=getAuthDetails(extraData)
         qToken=getAuthDetails(extraData, prefix='?')
@@ -3433,7 +3437,7 @@ def getLinkURL(url, pathData, server, season_shelf=False):
     #If key starts with http, then return it
     if path[0:4] == "http":
         printDebug("Detected http link")
-        return path
+        return path+"?X-Plex-Token="+getMyPlexToken(renew)
 
     #If key starts with a / then prefix with server address
     elif path[0] == '/':
