@@ -762,29 +762,59 @@ def getNewMyPlexToken(suppress=True, title="Error"):
     txdata = ""
     token = False
 
-    myplex_headers={'Authorization': "Basic %s" % base64string}
+    myplex_headers={'X-Plex-Platform': "XBMC",
+                    'X-Plex-Platform-Version': "12.00/Frodo",
+                    'X-Plex-Provides': "player",
+                    'X-Plex-Product': "PleXBMC",
+                    'X-Plex-Version': PLEXBMC_VERSION,
+                    'X-Plex-Device': PLEXBMC_PLATFORM,
+                    'X-Plex-Client-Identifier': "PleXBMC",
+                    'Authorization': "Basic %s" % base64string}
 
     try:
-        conn = httplib.HTTPSConnection("plex.tv")
-        conn.request("GET", "/pms/servers.xml?includeLite=1", txdata, myplex_headers)
-        data = conn.getresponse()
+        if __settings__.getSetting("server_own") == "false": #user does not own server, need different URL to obtain auth token
+            conn = httplib.HTTPSConnection("plex.tv")
+            conn.request("GET", "/pms/servers.xml?includeLite=1", txdata, myplex_headers)
+            data = conn.getresponse()
 
-        if int(data.status) == 200:
-            link = data.read()
-            printDebug("====== XML returned =======")
-            try:
-                token = etree.fromstring(link).find("Server").get("accessToken")
-                __settings__.setSetting('myplex_token', myplex_username + "|" + token)
-            except:
-                printDebug(link)
+            if int(data.status) == 200:
+                link = data.read()
+                printDebug("====== XML returned =======")
+                try:
+                    token = etree.fromstring(link).find("Server").get("accessToken")
+                    __settings__.setSetting('myplex_token', myplex_username + "|" + token)
+                except:
+                    printDebug(link)
 
-            printDebug("====== XML finished ======")
-        else:
-            error = "HTTP response error: " + str(data.status) + " " + str(data.reason)
-            if suppress is False:
-                xbmcgui.Dialog().ok(title, error)
-            print error
-            return ""
+                printDebug("====== XML finished ======")
+            else:
+                error = "HTTP response error: " + str(data.status) + " " + str(data.reason)
+                if suppress is False:
+                    xbmcgui.Dialog().ok(title, error)
+                print error
+                return ""
+        else: #user is owner, obtain auth token the old-fashioned way
+            conn = httplib.HTTPSConnection(MYPLEX_SERVER)
+            conn.request("POST", "/users/sign_in.xml", txdata, myplex_headers)
+            data = conn.getresponse()
+
+            if int(data.status) == 201:
+                link = data.read()
+                printDebug("====== XML returned =======")
+
+                try:
+                    token = etree.fromstring(link).findtext('authentication-token')
+                    __settings__.setSetting('myplex_token', myplex_username + "|" + token)
+                except:
+                    printDebug(link)
+
+                printDebug("====== XML finished ======")
+            else:
+                error = "HTTP response error: " + str(data.status) + " " + str(data.reason)
+                if suppress is False:
+                    xbmcgui.Dialog().ok(title, error)
+                print error
+                return ""
     except socket.gaierror :
         error = 'Unable to lookup host: MyPlex' + "\nCheck host name is correct"
         if suppress is False:
