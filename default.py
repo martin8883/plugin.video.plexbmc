@@ -733,7 +733,6 @@ def getMyPlexToken(renew=False):
         user, token = (__settings__.getSetting('myplex_token')).split('|')
     except:
         token = None
-    printDebug("User + token: "+user+" | "+token)
     printDebug("%i,%i,%i" % ((token is None), (renew), (user != __settings__.getSetting('myplex_user'))))
     if (token is None) or (renew) or (user != __settings__.getSetting('myplex_user')):
         token = getNewMyPlexToken()
