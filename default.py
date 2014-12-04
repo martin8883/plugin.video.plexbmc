@@ -317,8 +317,8 @@ def discoverAllServers( ):
                 das_server_index = das_server_index + 1
 
     printDebug("PleXBMC -> serverList is " + str(das_servers), False)
-    return das_servers
-    #return deduplicateServers(das_servers)
+    #return das_servers
+    return deduplicateServers(das_servers)
 
 def readCache(cachefile):
     if __settings__.getSetting("cache") == "false":
@@ -459,7 +459,7 @@ def deduplicateServers( server_list ):
       @Return: unique list of media servers
     '''
     printDebug("== ENTER: deduplicateServers ==", False)
-
+    printDebug("!!!!!Server list: "+str(server_list))
     if len(server_list) <= 1:
         return server_list
 
@@ -733,7 +733,8 @@ def getMyPlexToken(renew=False):
         user, token = (__settings__.getSetting('myplex_token')).split('|')
     except:
         token = None
-
+    printDebug("User + token: "+user+" | "+token)
+    printDebug("%i,%i,%i" % ((token is None), (renew), (user != __settings__.getSetting('myplex_user'))))
     if (token is None) or (renew) or (user != __settings__.getSetting('myplex_user')):
         token = getNewMyPlexToken()
 
@@ -761,26 +762,18 @@ def getNewMyPlexToken(suppress=True, title="Error"):
     txdata = ""
     token = False
 
-    myplex_headers={'X-Plex-Platform': "XBMC",
-                    'X-Plex-Platform-Version': "12.00/Frodo",
-                    'X-Plex-Provides': "player",
-                    'X-Plex-Product': "PleXBMC",
-                    'X-Plex-Version': PLEXBMC_VERSION,
-                    'X-Plex-Device': PLEXBMC_PLATFORM,
-                    'X-Plex-Client-Identifier': "PleXBMC",
-                    'Authorization': "Basic %s" % base64string}
+    myplex_headers={'Authorization': "Basic %s" % base64string}
 
     try:
-        conn = httplib.HTTPSConnection(MYPLEX_SERVER)
-        conn.request("POST", "/users/sign_in.xml", txdata, myplex_headers)
+        conn = httplib.HTTPSConnection("plex.tv")
+        conn.request("GET", "/pms/servers.xml?includeLite=1", txdata, myplex_headers)
         data = conn.getresponse()
 
-        if int(data.status) == 201:
+        if int(data.status) == 200:
             link = data.read()
             printDebug("====== XML returned =======")
-
             try:
-                token = etree.fromstring(link).findtext('authentication-token')
+                token = etree.fromstring(link).find("Server").get("accessToken")
                 __settings__.setSetting('myplex_token', myplex_username + "|" + token)
             except:
                 printDebug(link)
