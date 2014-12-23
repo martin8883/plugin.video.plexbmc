@@ -47,6 +47,13 @@ try:
 except ImportError:
     import pickle
 
+try:
+    # normal ElementTree install
+    import xml.etree.ElementTree as etree
+    print("PleXBMC -> Running with built-in ElementTree")
+except ImportError:
+    print("PleXBMC -> Failed to import ElementTree from any known place")
+
 __addon__ = xbmcaddon.Addon()
 __plugin__ = __addon__.getAddonInfo('name')
 __version__ = __addon__.getAddonInfo('version')
@@ -340,7 +347,7 @@ def discoverAllServers( ):
     #         del das_servers[das_server_index]
 
     printDebug("PleXBMC -> serverList is " + str(das_servers), False)
-
+    #return das_servers
     return deduplicateServers(das_servers)
 
 def readCache(cachefile):
@@ -370,7 +377,7 @@ def writeCache(cachefile, object):
     cache.close()
     return True
 
-def checkCache(cachefile, life=3600):
+def checkCache(cachefile, life=5):
 
     if __settings__.getSetting("cache") == "false":
         return (False, None)
@@ -416,12 +423,12 @@ def getLocalServers(ip_address="localhost", port=32400):
          return []
 
     server=etree.fromstring(html)
-
+    
     return {'serverName': server.attrib['friendlyName'].encode('utf-8'),
                         'server'    : ip_address,
                         'port'      : port,
                         'discovery' : 'local',
-                        'token'     : None ,
+                        'token'     : getMyPlexToken() ,
                         'uuid'      : server.attrib['machineIdentifier'],
                         'owned'     : '1',
                         'master'    : 1,
@@ -439,12 +446,14 @@ def getMyPlexServers( ):
 
     tempServers = []
     url_path = "/pms/servers"
-    all_servers = getMyPlexURL(url_path)
 
-    if all_servers is False:
+    xml = getMyPlexURL(url_path)
+
+    if xml is False:
         return {}
 
-    servers = etree.fromstring(all_servers)
+    servers = etree.fromstring(xml)
+
     count = 0
     for server in servers:
         #data = dict(server.items())
@@ -469,7 +478,7 @@ def getMyPlexServers( ):
                             'owned'     : owned,
                             'master'    : master,
                             'class'     : ""})
-
+    printDebug(tempServers)
     return tempServers
                                        
 def deduplicateServers( server_list ):
@@ -480,7 +489,7 @@ def deduplicateServers( server_list ):
       @Return: unique list of media servers
     '''
     printDebug("== ENTER: deduplicateServers ==", False)
-
+    printDebug("!!!!!Server list: "+str(server_list))
     if len(server_list) <= 1:
         return server_list
 
@@ -694,7 +703,7 @@ def getMyPlexURL(url_path, renew=False, suppress=True):
     printDebug("url = "+MYPLEX_SERVER+url_path)
 
     try:
-        conn = httplib.HTTPSConnection(MYPLEX_SERVER, timeout=5)
+        conn = httplib.HTTPSConnection(MYPLEX_SERVER, timeout=10)
         conn.request("GET", url_path+"?X-Plex-Token="+getMyPlexToken(renew))
         data = conn.getresponse()
         if ( int(data.status) == 401 )  and not ( renew ):
@@ -792,27 +801,49 @@ def getNewMyPlexToken(suppress=True, title="Error"):
                     'Authorization': "Basic %s" % base64string}
 
     try:
-        conn = httplib.HTTPSConnection(MYPLEX_SERVER)
-        conn.request("POST", "/users/sign_in.xml", txdata, myplex_headers)
-        data = conn.getresponse()
+        if __settings__.getSetting("server_own") == "false": #user does not own server, need different URL to obtain auth token
+            conn = httplib.HTTPSConnection("plex.tv")
+            conn.request("GET", "/pms/servers.xml?includeLite=1", txdata, myplex_headers)
+            data = conn.getresponse()
 
-        if int(data.status) == 201:
-            link = data.read()
-            printDebug("====== XML returned =======")
+            if int(data.status) == 200:
+                link = data.read()
+                printDebug("====== XML returned =======")
+                try:
+                    token = etree.fromstring(link).find("Server").get("accessToken")
+                    __settings__.setSetting('myplex_token', myplex_username + "|" + token)
+                except:
+                    printDebug(link)
 
-            try:
-                token = etree.fromstring(link).findtext('authentication-token')
-                __settings__.setSetting('myplex_token', myplex_username + "|" + token)
-            except:
-                printDebug(link)
+                printDebug("====== XML finished ======")
+            else:
+                error = "HTTP response error: " + str(data.status) + " " + str(data.reason)
+                if suppress is False:
+                    xbmcgui.Dialog().ok(title, error)
+                print error
+                return ""
+        else: #user is owner, obtain auth token the old-fashioned way
+            conn = httplib.HTTPSConnection(MYPLEX_SERVER)
+            conn.request("POST", "/users/sign_in.xml", txdata, myplex_headers)
+            data = conn.getresponse()
 
-            printDebug("====== XML finished ======")
-        else:
-            error = "HTTP response error: " + str(data.status) + " " + str(data.reason)
-            if suppress is False:
-                xbmcgui.Dialog().ok(title, error)
-            print error
-            return ""
+            if int(data.status) == 201:
+                link = data.read()
+                printDebug("====== XML returned =======")
+
+                try:
+                    token = etree.fromstring(link).findtext('authentication-token')
+                    __settings__.setSetting('myplex_token', myplex_username + "|" + token)
+                except:
+                    printDebug(link)
+
+                printDebug("====== XML finished ======")
+            else:
+                error = "HTTP response error: " + str(data.status) + " " + str(data.reason)
+                if suppress is False:
+                    xbmcgui.Dialog().ok(title, error)
+                print error
+                return ""
     except socket.gaierror :
         error = 'Unable to lookup host: MyPlex' + "\nCheck host name is correct"
         if suppress is False:
@@ -830,6 +861,10 @@ def getNewMyPlexToken(suppress=True, title="Error"):
 
 def getURL(url, suppress=True, type="GET", popup=0):
     printDebug("== ENTER: getURL ==", False)
+    separator="?"
+    if "?" in url:
+        separator="&"
+    url = url+separator+"X-Plex-Token="+getMyPlexToken()
     try:
         if url[0:4] == "http":
             serversplit=2
@@ -841,11 +876,10 @@ def getURL(url, suppress=True, type="GET", popup=0):
         server=url.split('/')[serversplit]
         urlPath="/"+"/".join(url.split('/')[urlsplit:])
 
-        authHeader=getAuthDetails({'token':_PARAM_TOKEN}, False)
-
+        authHeader=getAuthDetails({'token':getMyPlexToken()}, False)
         printDebug("url = "+url)
         printDebug("header = "+str(authHeader))
-        conn = httplib.HTTPConnection(server, timeout=8)
+        conn = httplib.HTTPConnection(server, timeout=10)
         conn.request(type, urlPath, headers=authHeader)
         data = conn.getresponse()
         
@@ -891,7 +925,7 @@ def getURL(url, suppress=True, type="GET", popup=0):
                     xbmcgui.Dialog().ok("Error",server)
                     
         else:
-            link=data.read()
+            link=str(data.read())
             printDebug("====== XML returned =======")
             printDebug(link, False)
             printDebug("====== XML finished ======")
@@ -1032,8 +1066,9 @@ def addGUIItem(url, details, extraData, context=None, folder=True):
         if item_title == '':
             return
 
-        if (extraData.get('token',None) is None) and _PARAM_TOKEN:
-            extraData['token']=_PARAM_TOKEN
+        #if (extraData.get('token',None) is None) and _PARAM_TOKEN:
+        #    extraData['token']=_PARAM_TOKEN
+        extraData['token']=getMyPlexToken()
 
         aToken=getAuthDetails(extraData)
         qToken=getAuthDetails(extraData, prefix='?')
@@ -1079,6 +1114,9 @@ def addGUIItem(url, details, extraData, context=None, folder=True):
             liz.setProperty('Artist_Description', extraData.get('plot',''))
             liz.setProperty('Album_Description', extraData.get('plot',''))
 
+        if extraData.get('type','').lower() == "video":
+            liz.setInfo( type="Video", infoLabels={ "DateAdded": extraData.get('dateadded','')})
+
         #For all end items    
         if ( not folder):
             liz.setProperty('IsPlayable', 'true')
@@ -1086,7 +1124,7 @@ def addGUIItem(url, details, extraData, context=None, folder=True):
             if extraData.get('type','video').lower() == "video":
                 liz.setProperty('TotalTime', str(extraData.get('duration')))
                 liz.setProperty('ResumeTime', str(extraData.get('resume')))
-            
+
                 if g_skipmediaflags == "false":
                     printDebug("Setting VrR as : %s" % extraData.get('VideoResolution',''))
                     liz.setProperty('VideoResolution', extraData.get('VideoResolution',''))
@@ -1420,7 +1458,15 @@ def enforceSkinView(mode):
 def Movies( url, tree=None ):
     printDebug("== ENTER: Movies() ==", False)
     xbmcplugin.setContent(pluginhandle, 'movies')
-
+    
+    xbmcplugin.addSortMethod(pluginhandle, 25 ) #video title ignore THE
+    xbmcplugin.addSortMethod(pluginhandle, 19 )  #date added
+    xbmcplugin.addSortMethod(pluginhandle, 3 )  #date
+    xbmcplugin.addSortMethod(pluginhandle, 18 ) #rating
+    xbmcplugin.addSortMethod(pluginhandle, 17 ) #year
+    xbmcplugin.addSortMethod(pluginhandle, 29 ) #runtime
+    xbmcplugin.addSortMethod(pluginhandle, 28 ) #by MPAA
+    
     #get the server name from the URL, which was passed via the on screen listing..
     tree=getXML(url,tree)
     if tree is None:
@@ -1451,10 +1497,6 @@ def buildContextMenu( url, itemData ):
     plugin_url="RunScript(plugin.video.plexbmc, "
     ID=itemData.get('ratingKey','0')
 
-    #Initiate Library refresh
-    libraryRefresh = plugin_url+"update, " + refreshURL.split('?')[0]+getAuthDetails(itemData,prefix="?") + ")"
-    context.append(('Rescan library section', libraryRefresh , ))
-
     #Mark media unwatched
     unwatchURL="http://"+server+"/:/unscrobble?key="+ID+"&identifier=com.plexapp.plugins.library"+getAuthDetails(itemData)
     unwatched=plugin_url+"watch, " + unwatchURL + ")"
@@ -1465,14 +1507,18 @@ def buildContextMenu( url, itemData ):
     watched=plugin_url+"watch, " + watchURL + ")"
     context.append(('Mark as Watched', watched , ))
 
+    #Initiate Library refresh
+    libraryRefresh = plugin_url+"update, " + refreshURL.split('?')[0]+getAuthDetails(itemData,prefix="?") + ")"
+    context.append(('Rescan library section', libraryRefresh , ))
+
     #Delete media from Library
     deleteURL="http://"+server+"/library/metadata/"+ID+getAuthDetails(itemData,prefix="?")
     removed=plugin_url+"delete, " + deleteURL + ")"
     context.append(('Delete media', removed , ))
 
     #Display plugin setting menu
-    settingDisplay=plugin_url+"setting)"
-    context.append(('PleXBMC settings', settingDisplay , ))
+    #settingDisplay=plugin_url+"setting)"
+    #context.append(('PleXBMC settings', settingDisplay , ))
 
     #Reload media section
     listingRefresh=plugin_url+"refresh)"
@@ -1495,6 +1541,11 @@ def buildContextMenu( url, itemData ):
 def TVShows( url, tree=None ):
     printDebug("== ENTER: TVShows() ==", False)
     xbmcplugin.setContent(pluginhandle, 'tvshows')
+    xbmcplugin.addSortMethod(pluginhandle, 25 ) #video title ignore THE
+    xbmcplugin.addSortMethod(pluginhandle, 3 )  #date
+    xbmcplugin.addSortMethod(pluginhandle, 18 ) #rating
+    xbmcplugin.addSortMethod(pluginhandle, 17 ) #year
+    xbmcplugin.addSortMethod(pluginhandle, 28 ) #by MPAA
 
     #Get the URL and server name.  Get the XML and parse
     tree=getXML(url,tree)
@@ -1663,6 +1714,14 @@ def TVSeasons( url ):
 def TVEpisodes( url, tree=None ):
     printDebug("== ENTER: TVEpisodes() ==", False)
     xbmcplugin.setContent(pluginhandle, 'episodes')
+    xbmcplugin.addSortMethod(pluginhandle, xbmcplugin.SORT_METHOD_EPISODE )  #episode
+    xbmcplugin.addSortMethod(pluginhandle, 3 )  #date
+    xbmcplugin.addSortMethod(pluginhandle, 25 ) #video title ignore THE
+    xbmcplugin.addSortMethod(pluginhandle, 19 )  #date added
+    xbmcplugin.addSortMethod(pluginhandle, 18 ) #rating
+    xbmcplugin.addSortMethod(pluginhandle, 17 ) #year
+    xbmcplugin.addSortMethod(pluginhandle, 29 ) #runtime
+    xbmcplugin.addSortMethod(pluginhandle, 28 ) #by MPAA
 
     tree=getXML(url,tree)
     if tree is None:
@@ -1724,12 +1783,13 @@ def TVEpisodes( url, tree=None ):
                  'tvshowtitle' : episode.get('grandparentTitle',tree.get('grandparentTitle','')).encode('utf-8') ,
                  'season'      : int(episode.get('parentIndex',tree.get('parentIndex',0))) }
 
-        if episode.get('sorttitle'): details['sorttitle'] = episode.get('sorttitle').encode('utf-8')
+        if episode.get('sorttitle'):
+            details['sorttitle'] = episode.get('sorttitle').encode('utf-8')
 
         if tree.get('mixedParents','0') == '1':
             details['title'] = "%s - %sx%s %s" % ( details['tvshowtitle'], details['season'], str(details['episode']).zfill(2), details['title'] )
-        else:
-            details['title'] = str(details['episode']).zfill(2) + ". " + details['title']
+        #else:
+        #    details['title'] = str(details['episode']).zfill(2) + ". " + details['title']
 
 
         #Extra data required to manage other properties
@@ -2240,6 +2300,7 @@ def monitorPlayback( id, server ):
     monitorCount=0
     progress = 0
     complete = 0
+    playedTime = 0
     #Whilst the file is playing back
     while xbmc.Player().isPlaying():
         #Get the current playback time
@@ -2257,8 +2318,9 @@ def monitorPlayback( id, server ):
         #If we are less than 95% completem, store resume time
         elif progress < 95:
             printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-            getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000),suppress=True)
+            getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000)+"&state=playing",suppress=True)
             complete=0
+            playedTime = currentTime
 
         #Otherwise, mark as watched
         else:
@@ -2266,11 +2328,16 @@ def monitorPlayback( id, server ):
                 printDebug( "Movie marked as watched. Over 95% complete")
                 getURL("http://"+server+"/:/scrobble?key="+id+"&identifier=com.plexapp.plugins.library",suppress=True)
                 complete=1
+                # playedTime = 0 in order to avoid a bug of tract plex plugin (check on completed tv episode when time==duration)
+                playedTime = 0
 
         xbmc.sleep(5000)
 
     #If we get this far, playback has stopped
     printDebug("Playback Stopped")
+
+    # The follwing progress:stopped update is necessary only for plugin trakt to 'cancel watching' on trakt.tv server, otherwise it will keep status 'watching' for about 15min
+    getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(playedTime*1000)+"&state=stopped",suppress=True)
 
     if g_sessionID is not None:
         printDebug("Stopping PMS transcode job with session " + g_sessionID)
@@ -2535,8 +2602,6 @@ def getContent( url ):
 
     if view_group == "movie":
         printDebug( "This is movie XML, passing to Movies")
-        if not (lastbit.startswith('recently') or lastbit.startswith('newest') or lastbit.startswith('onDeck')):
-            xbmcplugin.addSortMethod(pluginhandle,xbmcplugin.SORT_METHOD_VIDEO_SORT_TITLE_IGNORE_THE )
         Movies(url, tree)
     elif view_group == "show":
         printDebug( "This is tv show XML")
@@ -2549,9 +2614,9 @@ def getContent( url ):
         artist(url, tree)
     elif view_group== 'album' or view_group == 'albums':
         albums(url,tree)
-    elif view_group == "track":
+    elif view_group == 'track':
         printDebug("This is track XML")
-        tracks(url, tree)
+        tracks(url, tree) #sorthing is handled here
     elif view_group =="photo":
         printDebug("This is a photo XML")
         photo(url,tree)
@@ -2691,7 +2756,10 @@ def artist( url, tree=None ):
     '''
     printDebug("== ENTER: artist ==", False)
     xbmcplugin.setContent(pluginhandle, 'artists')
-
+    xbmcplugin.addSortMethod(pluginhandle, 12 ) #artist title ignore THE
+    xbmcplugin.addSortMethod(pluginhandle, 34 ) #last played
+    xbmcplugin.addSortMethod(pluginhandle, 17 ) #year
+ 
     #Get the URL and server name.  Get the XML and parse
     tree=getXML(url,tree)
     if tree is None:
@@ -2728,7 +2796,11 @@ def artist( url, tree=None ):
 def albums( url, tree=None ):
     printDebug("== ENTER: albums ==", False)
     xbmcplugin.setContent(pluginhandle, 'albums')
-
+    xbmcplugin.addSortMethod(pluginhandle, 24 ) #album title ignore THE
+    xbmcplugin.addSortMethod(pluginhandle, 12 )  #artist ignore THE
+    xbmcplugin.addSortMethod(pluginhandle, 34 ) #last played
+    xbmcplugin.addSortMethod(pluginhandle, 17 ) #year
+    
     #Get the URL and server name.  Get the XML and parse
     tree=getXML(url,tree)
     if tree is None:
@@ -2770,6 +2842,10 @@ def albums( url, tree=None ):
 def tracks( url,tree=None ):
     printDebug("== ENTER: tracks ==", False)
     xbmcplugin.setContent(pluginhandle, 'songs')
+    xbmcplugin.addSortMethod(pluginhandle, 10 ) #title title ignore THE
+    xbmcplugin.addSortMethod(pluginhandle, 8 ) #duration
+    xbmcplugin.addSortMethod(pluginhandle, 27 ) #song rating
+    xbmcplugin.addSortMethod(pluginhandle, 7 ) #track number
 
     tree=getXML(url,tree)
     if tree is None:
@@ -2779,12 +2855,15 @@ def tracks( url,tree=None ):
     playlist.clear()
      
     server=getServerFromURL(url)
-    sectionart=getFanart(tree,server)
+    sectionart=getFanart(tree, server)
+    sectionthumb=getThumb(tree, server)
     setWindowHeading(tree)
     TrackTags=tree.findall('Track')
     for track in TrackTags:
+        if track.get('thumb'):
+            sectionthumb=getThumb(track, server)
 
-        trackTag(server, tree, track)
+        trackTag(server, tree, track, sectionart, sectionthumb)
 
     printDebug ("Skin override is: %s" % __settings__.getSetting('skinoverride'))
     view_id = enforceSkinView('music')
@@ -2793,8 +2872,9 @@ def tracks( url,tree=None ):
 
     xbmcplugin.endOfDirectory(pluginhandle,cacheToDisc=True)
 
-def getXML (url, media = None):
+def getXML (url, tree=None):
     printDebug("== ENTER: getXML ==", False)
+<<<<<<< HEAD
     if media is None:
 
         tree = getURL(url)
@@ -2804,6 +2884,18 @@ def getXML (url, media = None):
             return None
 
         media = etree.fromstring(tree)
+=======
+
+    if tree is None:
+
+        html=getURL(url)
+
+        if html is False:
+            print "PleXBMC -> Server [%s] offline, not responding or no data was receieved" % getServerFromURL(url)
+            return None
+
+        tree=etree.fromstring(html)
+>>>>>>> 309d64b75c839540cf50d3265624af023a9bcd6b
 
     if media.get('message'):
         xbmcgui.Dialog().ok(media.get('header','Message'),media.get('message',''))
@@ -3050,6 +3142,10 @@ def movieTag(url, server, tree, movie, randomNumber):
     #Gather some data
     view_offset=movie.get('viewOffset',0)
     duration=int(mediaarguments.get('duration',movie.get('duration',0)))/1000
+    if movie.get('originallyAvailableAt') is not None:
+        release_date = time.strftime('%d.%m.%Y',(time.strptime(movie.get('originallyAvailableAt'), '%Y-%m-%d')))
+    else:
+        release_date = ""
 
     #Required listItem entries for XBMC
     details={'plot'      : movie.get('summary','').encode('utf-8') ,
@@ -3059,6 +3155,7 @@ def movieTag(url, server, tree, movie, randomNumber):
              'studio'    : movie.get('studio','').encode('utf-8'),
              'mpaa'      : movie.get('contentRating', '').encode('utf-8'),
              'year'      : int(movie.get('year',0)),
+             'date'      : release_date,
              'tagline'   : movie.get('tagline','')}
 
     #Extra data required to manage other properties
@@ -3069,6 +3166,7 @@ def movieTag(url, server, tree, movie, randomNumber):
                'key'          : movie.get('key',''),
                'ratingKey'    : str(movie.get('ratingKey',0)),
                'duration'     : duration,
+               'dateadded'    : str(datetime.datetime.fromtimestamp(int(movie.get('addedAt',0)))),
                'resume'       : int (int(view_offset)/1000) }
 
     #Determine what tupe of watched flag [overlay] to use
@@ -3123,7 +3221,7 @@ def getMediaData ( tag_dict ):
                 'xbmc_AudioChannels' : tag_dict.get('audioChannels') ,
                 'xbmc_VideoAspect'   : tag_dict.get('aspectRatio') }
 
-def trackTag( server, tree, track, listing=True ):
+def trackTag( server, tree, track, sectionart="", sectionthumb="", listing=True ):
     printDebug("== ENTER: trackTAG ==", False)
     xbmcplugin.setContent(pluginhandle, 'songs')
 
@@ -3139,19 +3237,22 @@ def trackTag( server, tree, track, listing=True ):
              'rating'      : float(track.get('rating',0)) ,
              'album'       : track.get('parentTitle', tree.get('parentTitle','')).encode('utf-8') ,
              'artist'      : track.get('grandparentTitle', tree.get('grandparentTitle','')).encode('utf-8') ,
-             'duration'    : int(track.get('duration',0))/1000 }
+             'duration'    : int(track.get('duration',0))/1000 
+             }
 
     extraData={'type'         : "Music" ,
-               'fanart_image' : getFanart(track, server) ,
-               'thumb'        : getThumb(track, server) ,
+               #'fanart_image' : getFanart(track, server) ,
+               #'thumb'        : getThumb(track, server) ,
+               'fanart_image' : sectionart ,
+               'thumb'      : sectionthumb ,
                'ratingKey'    : track.get('key','') }
 
-    if '/resources/plex.png' in extraData['thumb']:
-        printDebug("thumb is default")
-        extraData['thumb']=getThumb(tree, server)
+    #if '/resources/plex.png' in extraData['thumb']:
+    #    printDebug("thumb is default")
+    #    extraData['thumb']=getThumb(tree, server)
 
-    if extraData['fanart_image'] == "":
-        extraData['fanart_image']=getFanart(tree, server)
+    #if extraData['fanart_image'] == "":
+    #    extraData['fanart_image']=getFanart(tree, server)
 
     #If we are streaming, then get the virtual location
     url=mediaType(partDetails,server)
@@ -3401,7 +3502,7 @@ def getLinkURL(url, pathData, server, season_shelf=False):
     #If key starts with http, then return it
     if path[0:4] == "http":
         printDebug("Detected http link")
-        return path
+        return path+"?X-Plex-Token="+getMyPlexToken(renew)
 
     #If key starts with a / then prefix with server address
     elif path[0] == '/':
@@ -3829,6 +3930,10 @@ def amberskin():
         aToken=getAuthDetails(section)
         qToken=getAuthDetails(section, prefix='?')
 
+        printDebug("===TOKENS ARE===", False)
+        printDebug(aToken, False)
+        printDebug("===/TOKENS ===", False)
+
         if g_secondary == "true":
             mode=_MODE_GETCONTENT
         else:
@@ -4015,7 +4120,11 @@ def amberskin():
     else:
         WINDOW.clearProperty("plexbmc.myplex")
 
+<<<<<<< HEAD
     fullShelf(server_list)
+=======
+    fullShelf (server_list)
+>>>>>>> 309d64b75c839540cf50d3265624af023a9bcd6b
 
 def fullShelf(server_list={}):
     #Gather some data and set the window properties
@@ -4040,8 +4149,8 @@ def fullShelf(server_list={}):
     ondeck_list={}
     full_count=0
 
-    if server_list == {}:
-        server_list=discoverAllServers()
+    #if server_list == {}:
+    #    server_list=discoverAllServers()
 
     if server_list == {}:
         xbmc.executebuiltin("XBMC.Notification(Unable to see any media servers,)")
@@ -4050,7 +4159,6 @@ def fullShelf(server_list={}):
 
     randomNumber = str(random.randint(1000000000,9999999999))
 
-
     '''
     logfile = PLUGINPATH+"/_server_list.txt"
     logfileh = open(logfile, "w")
@@ -4058,38 +4166,46 @@ def fullShelf(server_list={}):
     logfileh.close()
     '''
 
+    for server_details in server_list.values():
 
-    serverList = []
+        if not server_details['owned'] == '1':
+            continue
 
-    for key, value in server_list.iteritems():
-        temp = [key, value]
-        serverList.append(temp)
+        global _PARAM_TOKEN
+        _PARAM_TOKEN = server_details.get('token', '')
+        aToken=getAuthDetails({'token': _PARAM_TOKEN})
+        qToken='?' + aToken
 
+        sections = getAllSections(server_list)
+        #ra_log_count = 1
 
-    for index in serverList:
+        if __settings__.getSetting('homeshelf') == '0' or __settings__.getSetting('homeshelf') == '2':
 
-        for server_details in server_list.values():
-
-            if not server_details['owned'] == '1':
-                continue
-
-            global _PARAM_TOKEN
-            _PARAM_TOKEN = server_details.get('token', '')
-            aToken=getAuthDetails({'token': _PARAM_TOKEN})
-            qToken='?' + aToken
-
-            sections = getAllSections(server_list)
-            ra_log_count = 1
-
-            if __settings__.getSetting('homeshelf') == '0' or __settings__.getSetting('homeshelf') == '2':
+            '''
+            logfile = PLUGINPATH+"/_shelf_sections_.txt"
+            logfileh = open(logfile, "w")
+            logfileh.write(str(sections))
+            logfileh.close()
+            '''
+            
+            for section in sections:
+                
+                _PARAM_TOKEN = section.get('token', '')
+                fullpath = section.get('address') + section.get("path")
+                tree = getXML('http://' + fullpath + "/recentlyAdded")
+                _PARAM_TOKEN = server_details.get('token', '')
 
                 '''
-                logfile = PLUGINPATH+"/_shelf_sections_.txt"
+                eetee = etree.ElementTree()
+                eetee._setroot(tree)
+                logfile = PLUGINPATH+"/RecentlyAdded"+ str(ra_file_count) + ".xml"
                 logfileh = open(logfile, "w")
-                logfileh.write(str(sections))
+                eetee.write(logfileh)
                 logfileh.close()
+                ra_log_count += 1
                 '''
 
+<<<<<<< HEAD
                 for section in sections:
                     recent_url = section.get('address') + section.get("path") + "/recentlyAdded"
                     _PARAM_TOKEN = section.get('token', '')
@@ -4116,40 +4232,49 @@ def fullShelf(server_list={}):
                     for eachitem in tree:
                         if ra_item_count > 15:
                             break
+=======
+                if tree is None:
+                    printDebug("PLEXBMC -> RecentlyAdded items not found on: " + fullpath, False)
+                    continue
+>>>>>>> 309d64b75c839540cf50d3265624af023a9bcd6b
 
-                        if eachitem.get("type", "") == "episode":
-                            key = int(eachitem.get("parentRatingKey"))  # season identifier
+                libraryuuid = tree.attrib["librarySectionUUID"]
+                ep_helper = {}  # helper season counter
+                ra_item_count = 1
+                for eachitem in tree:
+                    if ra_item_count > 15:
+                        break
 
-                            if key in ep_helper or ((__settings__.getSetting('hide_watched_recent_items') == 'true' and int(eachitem.get("viewCount", 0)) > 0)):
-                                pass
+                    if eachitem.get("type", "") == "episode":
+                        key = int(eachitem.get("parentRatingKey"))  # season identifier
 
-                            else:
-                                recent_list[full_count] = (eachitem, section.get('address'), aToken, qToken, libraryuuid)
-                                ep_helper[key] = key  # use seasons as dict key so we can check
-                                full_count += 1
-                                ra_item_count += 1
+                        if key in ep_helper or ((__settings__.getSetting('hide_watched_recent_items') == 'true' and int(eachitem.get("viewCount", 0)) > 0)):
+                            pass
 
                         else:
-                            recent_list[full_count] = (eachitem, section.get('address'), aToken, qToken, libraryuuid)
+                            recent_list[full_count] = (eachitem, server_details['server'] + ":" + server_details['port'], aToken, qToken, libraryuuid)
+                            ep_helper[key] = key  # use seasons as dict key so we can check
                             full_count += 1
                             ra_item_count += 1
 
-                full_count = 0
+                    else:
+                        recent_list[full_count] = (eachitem, server_details['server']+":"+server_details['port'], aToken, qToken, libraryuuid)
+                        full_count += 1
+                        ra_item_count += 1
 
-                '''
-                logfile = PLUGINPATH+"/Recent_list.log"
-                logfileh = open(logfile, "w")
-                for item in recent_list:
-                    logfileh.write("%s\n" % item)
-                logfileh.close()
-                '''
+            full_count = 0
 
-                #deck_log_count = 1
+            '''
+            logfile = PLUGINPATH+"/Recent_list.log"
+            logfileh = open(logfile, "w")
+            for item in recent_list:
+                logfileh.write("%s\n" % item)
+            logfileh.close()
+            '''
 
-            if __settings__.getSetting('homeshelf') == '1' or __settings__.getSetting('homeshelf') == '2':
+            #deck_log_count = 1
 
-                for section in sections:
-
+<<<<<<< HEAD
                     ondeck_url = section.get('address') + section.get("path") + "/onDeck"
                     _PARAM_TOKEN = section.get('token', '')
                     tree = getURL(ondeck_url)
@@ -4164,25 +4289,45 @@ def fullShelf(server_list={}):
                     logfileh.close()
                     deck_log_count += 1
                     '''
+=======
+        if __settings__.getSetting('homeshelf') == '1' or __settings__.getSetting('homeshelf') == '2':
 
-                    if tree is None:
-                        #xbmc.executebuiltin("XBMC.Notification(Unable to contact server: "+server_details['serverName']+",)")
-                        #clearShelf()
-                        #return
-                        print ("PLEXBMC -> OnDeck items not found on: " + ondeck_url, False)
-                        continue
+            for section in sections:
+                
+                _PARAM_TOKEN = section.get('token', '')
+                fullpath = section.get("address") + section.get("path")
+                tree = getXML('http://' + fullpath + "/onDeck")
+                _PARAM_TOKEN = server_details.get('token', '')
+                
+                '''
+                eetee = etree.ElementTree()
+                eetee._setroot(tree)
+                logfile = PLUGINPATH+"/OnDeck"+ str(deck_file_count) + ".xml"
+                logfileh = open(logfile, "w")
+                eetee.write(logfileh)
+                logfileh.close()
+                deck_log_count += 1
+                '''
+>>>>>>> 309d64b75c839540cf50d3265624af023a9bcd6b
 
-                    deck_item_count = 1
-                    libraryuuid = tree.attrib["librarySectionUUID"]
-                    for eachitem in tree:
-                        if deck_item_count > 15: break
-                        deck_item_count +=1
+                if tree is None:
+                    #xbmc.executebuiltin("XBMC.Notification(Unable to contact server: "+server_details['serverName']+",)")
+                    #clearShelf()
+                    #return
+                    print ("PLEXBMC -> OnDeck items not found on: " + fullpath, False)
+                    continue
 
-                        #libraryuuid = tree.attrib["librarySectionUUID"]
-                        ondeck_list[full_count] = (eachitem, section.get('address'), aToken, qToken, libraryuuid)
-                        full_count += 1
+                deck_item_count = 1
+                libraryuuid = tree.attrib["librarySectionUUID"]
+                for eachitem in tree:
+                    if deck_item_count > 15: break
+                    deck_item_count +=1
 
-        #For each of the servers we have identified
+                    #libraryuuid = tree.attrib["librarySectionUUID"]
+                    ondeck_list[full_count] = (eachitem, server_details['server']+":"+server_details['port'], aToken, qToken, libraryuuid)
+                    full_count += 1
+
+    #For each of the servers we have identified
     for index in recent_list:
 
         media = recent_list[index][0]
@@ -4193,7 +4338,7 @@ def fullShelf(server_list={}):
 
         if media.get('type',None) == "movie":
 
-            printDebug("Found a recent movie entry: [%s]" % ( media.get('title','Unknown').encode('UTF-8') , ))
+            printDebug("Found a recent movie entry: [%s]" % (media.get('title','Unknown').encode('UTF-8')), False)
 
             if __settings__.getSetting('movieShelf') == "false":
                 WINDOW.clearProperty("Plexbmc.LatestMovie.1.Path" )
@@ -4236,16 +4381,16 @@ def fullShelf(server_list={}):
 
                 recentMovieCount += 1
 
-                printDebug("Building Recent window title: %s" % media.get('title', 'Unknown').encode('UTF-8'))
-                printDebug("Building Recent window url: %s" % m_url)
-                printDebug("Building Recent window thumb: %s" % m_thumb)
+                printDebug("Building Recent window title: %s" % media.get('title', 'Unknown').encode('UTF-8'), False)
+                printDebug("Building Recent window url: %s" % m_url, False)
+                printDebug("Building Recent window thumb: %s" % m_thumb, False)
 
             else:
                 continue
 
         elif media.get('type',None) == "season":
 
-            printDebug("Found a recent season entry [%s]" % ( media.get('parentTitle','Unknown').encode('UTF-8') , ))
+            printDebug("Found a recent season entry [%s]" % (media.get('parentTitle','Unknown').encode('UTF-8')), False)
 
             if __settings__.getSetting('tvShelf') == "false":
                 WINDOW.clearProperty("Plexbmc.LatestEpisode.1.Path" )
@@ -4263,9 +4408,9 @@ def fullShelf(server_list={}):
 
             recentSeasonCount += 1
 
-            printDebug("Building Recent window title: %s" % media.get('parentTitle','Unknown').encode('UTF-8'))
-            printDebug("Building Recent window url: %s" % s_url)
-            printDebug("Building Recent window thumb: %s" % s_thumb)
+            printDebug("Building Recent window title: %s" % media.get('parentTitle','Unknown').encode('UTF-8'), False)
+            printDebug("Building Recent window url: %s" % s_url, False)
+            printDebug("Building Recent window thumb: %s" % s_thumb, False)
 
         elif media.get('type') == "album":
 
@@ -5231,13 +5376,9 @@ if str(sys.argv[1]) == "skin":
 elif str(sys.argv[1]) == "amberskin":
     amberskin()
  
-#Populate recently OR on deck shelf items
+#Populate recently/on deck shelf items 
 elif str(sys.argv[1]) == "shelf":
     shelf()
-
-#Populate both recently AND on deck shelf items
-elif str(sys.argv[1]) == "fullshelf":
-    fullShelf()
 
 #Populate channel recently viewed items    
 elif str(sys.argv[1]) == "channelShelf":
@@ -5294,7 +5435,12 @@ elif sys.argv[1] == "master":
 #Delete cache and refresh it    
 elif str(sys.argv[1]) == "cacherefresh":
     deletecache()
-    xbmc.executebuiltin("ReloadSkin()")
+    WINDOW = xbmcgui.getCurrentWindowId()
+    if WINDOW == 10000:
+        printDebug("Currently in home - refreshing")
+        xbmc.executebuiltin("XBMC.ActivateWindow(Home)")
+    else:
+        xbmc.executebuiltin("Container.Refresh")
 
 #else move to the main code    
 else:
@@ -5323,7 +5469,6 @@ else:
         TVShows(param_url)
 
     elif mode == _MODE_MOVIES:
-        xbmcplugin.addSortMethod(pluginhandle, xbmcplugin.SORT_METHOD_VIDEO_SORT_TITLE_IGNORE_THE  )
         Movies(param_url)
 
     elif mode == _MODE_ARTISTS:
