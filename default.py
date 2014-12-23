@@ -2874,17 +2874,6 @@ def tracks( url,tree=None ):
 
 def getXML (url, tree=None):
     printDebug("== ENTER: getXML ==", False)
-<<<<<<< HEAD
-    if media is None:
-
-        tree = getURL(url)
-
-        if tree is False:
-            print "PleXBMC -> Server [%s] offline, not responding or no data was receieved" % getServerFromURL(url)
-            return None
-
-        media = etree.fromstring(tree)
-=======
 
     if tree is None:
 
@@ -2895,7 +2884,6 @@ def getXML (url, tree=None):
             return None
 
         tree=etree.fromstring(html)
->>>>>>> 309d64b75c839540cf50d3265624af023a9bcd6b
 
     if media.get('message'):
         xbmcgui.Dialog().ok(media.get('header','Message'),media.get('message',''))
@@ -4120,11 +4108,7 @@ def amberskin():
     else:
         WINDOW.clearProperty("plexbmc.myplex")
 
-<<<<<<< HEAD
     fullShelf(server_list)
-=======
-    fullShelf (server_list)
->>>>>>> 309d64b75c839540cf50d3265624af023a9bcd6b
 
 def fullShelf(server_list={}):
     #Gather some data and set the window properties
@@ -4205,38 +4189,9 @@ def fullShelf(server_list={}):
                 ra_log_count += 1
                 '''
 
-<<<<<<< HEAD
-                for section in sections:
-                    recent_url = section.get('address') + section.get("path") + "/recentlyAdded"
-                    _PARAM_TOKEN = section.get('token', '')
-                    tree = getURL(recent_url)
-                    tree = etree.fromstring(tree)
-                    _PARAM_TOKEN = server_details.get('token', '')
-
-                    '''
-                    eetee = etree.ElementTree()
-                    eetee._setroot(tree)
-                    logfile = PLUGINPATH+"/RecentlyAdded"+ str(ra_log_count) + ".xml"
-                    logfileh = open(logfile, "w")
-                    eetee.write(logfileh)
-                    logfileh.close()
-                    ra_log_count += 1
-                    '''
-
-                    if tree is None:
-                        printDebug("PLEXBMC -> RecentlyAdded items not found on: " + recent_url, False)
-                        continue
-                    libraryuuid = tree.attrib["librarySectionUUID"]
-                    ep_helper = {}  # helper season counter
-                    ra_item_count = 1
-                    for eachitem in tree:
-                        if ra_item_count > 15:
-                            break
-=======
                 if tree is None:
                     printDebug("PLEXBMC -> RecentlyAdded items not found on: " + fullpath, False)
                     continue
->>>>>>> 309d64b75c839540cf50d3265624af023a9bcd6b
 
                 libraryuuid = tree.attrib["librarySectionUUID"]
                 ep_helper = {}  # helper season counter
@@ -4274,22 +4229,6 @@ def fullShelf(server_list={}):
 
             #deck_log_count = 1
 
-<<<<<<< HEAD
-                    ondeck_url = section.get('address') + section.get("path") + "/onDeck"
-                    _PARAM_TOKEN = section.get('token', '')
-                    tree = getURL(ondeck_url)
-                    tree = etree.fromstring(tree)
-                    _PARAM_TOKEN = server_details.get('token', '')
-                    '''
-                    eetee = etree.ElementTree()
-                    eetee._setroot(tree)
-                    logfile = PLUGINPATH+"/OnDeck"+ str(deck_file_count) + ".xml"
-                    logfileh = open(logfile, "w")
-                    eetee.write(logfileh)
-                    logfileh.close()
-                    deck_log_count += 1
-                    '''
-=======
         if __settings__.getSetting('homeshelf') == '1' or __settings__.getSetting('homeshelf') == '2':
 
             for section in sections:
@@ -4308,7 +4247,6 @@ def fullShelf(server_list={}):
                 logfileh.close()
                 deck_log_count += 1
                 '''
->>>>>>> 309d64b75c839540cf50d3265624af023a9bcd6b
 
                 if tree is None:
                     #xbmc.executebuiltin("XBMC.Notification(Unable to contact server: "+server_details['serverName']+",)")
