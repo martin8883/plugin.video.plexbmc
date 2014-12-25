@@ -2872,18 +2872,18 @@ def tracks( url,tree=None ):
 
     xbmcplugin.endOfDirectory(pluginhandle,cacheToDisc=True)
 
-def getXML (url, tree=None):
+def getXML (url, media = None):
     printDebug("== ENTER: getXML ==", False)
+    if media is None:
 
-    if tree is None:
+        tree=getURL(url)
 
-        html=getURL(url)
 
-        if html is False:
+        if tree is False:
             print "PleXBMC -> Server [%s] offline, not responding or no data was receieved" % getServerFromURL(url)
             return None
 
-        tree=etree.fromstring(html)
+        media = etree.fromstring(tree)
 
     if media.get('message'):
         xbmcgui.Dialog().ok(media.get('header','Message'),media.get('message',''))
